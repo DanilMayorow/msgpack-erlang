@@ -26,9 +26,9 @@
 %% pack them all
 -spec pack(msgpack:object(), ?OPTION{}) -> binary().
 pack(I, _) when is_integer(I) andalso I < 0 ->
-    pack_int(I);
+  pack_neg_int(I);
 pack(I, _) when is_integer(I) ->
-    pack_uint(I);
+  pack_int(I);
 pack(F, _) when is_float(F) ->
     pack_double(F);
 pack(null, _Opt) ->
@@ -37,6 +37,17 @@ pack(false, _) ->
     << 16#C2:8 >>;
 pack(true, _) ->
     << 16#C3:8 >>;
+
+% Specific ID's type block - all convert to binary
+pack(Object, Opt) when is_pid(Object)->
+    Bin = erlang:pid_to_list(Object),
+    handle_binary(Bin, Opt);
+pack(Object, Opt) when is_port(Object)->
+    Bin = erlang:port_to_list(Object),
+    handle_binary(Bin, Opt);
+pack(Object, Opt) when is_reference(Object)->
+    Bin = erlang:ref_to_list(Object),
+    handle_binary(Bin, Opt);
 
 pack(Bin, Opt) when is_binary(Bin) ->
     handle_binary(Bin, Opt);
@@ -85,6 +96,10 @@ pack(List, ?OPTION{spec=new, pack_str=from_list}=Opt)  when is_list(List) ->
     catch error:badarg -> pack_array(List, Opt)
     end;
 
+pack(Tuple, Opt)  when is_tuple(Tuple) ->
+    List = erlang:tuple_to_list(Tuple),
+    pack_array(List, Opt);
+
 pack(List, Opt)  when is_list(List) ->
     pack_array(List, Opt);
 
@@ -116,47 +131,55 @@ handle_ext(Any, _Opt = ?OPTION{ext_packer=Packer,
 handle_ext(Other, _) ->
     throw({badarg, Other}).
 
--spec pack_int(integer()) -> binary().
+-spec pack_neg_int(integer()) -> binary().
 %% negative fixnum
-pack_int(N) when N >= -32->
+pack_neg_int(N) when N >= -32->
     << 2#111:3, N:5 >>;
 %% int 8
-pack_int(N) when N >= -128 ->
+pack_neg_int(N) when N >= -128 ->
     << 16#D0:8, N:8/big-signed-integer-unit:1 >>;
 %% int 16
-pack_int(N) when N >= -16#8000 ->
+pack_neg_int(N) when N >= -16#8000 ->
     << 16#D1:8, N:16/big-signed-integer-unit:1 >>;
 %% int 32
-pack_int(N) when N >= -16#80000000 ->
+pack_neg_int(N) when N >= -16#80000000 ->
     << 16#D2:8, N:32/big-signed-integer-unit:1 >>;
 %% int 64
-pack_int(N) when N >= -16#8000000000000000 ->
+pack_neg_int(N) when N >= -16#8000000000000000 ->
     << 16#D3:8, N:64/big-signed-integer-unit:1 >>;
 %% too big int
-pack_int(N) ->
+pack_neg_int(N) ->
     throw({badarg, N}).
 
 
--spec pack_uint(non_neg_integer()) -> binary().
+-spec pack_int(integer()) -> binary().
 %% positive fixnum
-pack_uint(N) when N < 128 ->
+pack_int(N) when N < 128 ->
     << 2#0:1, N:7 >>;
 %% uint 8
-pack_uint(N) when (N band 16#FF) =:= N ->
+pack_int(N) when (N band 16#FF) =:= N ->
     << 16#CC:8, N:8 >>;
+%% int 16
+pack_int(N) when N < 16#8000 ->
+    << 16#D1:8, N:16/big-signed-integer-unit:1 >>;
 %% uint 16
-pack_uint(N) when (N band 16#FFFF) =:= N ->
+pack_int(N) when (N band 16#FFFF) =:= N ->
     << 16#CD:8, N:16/big-unsigned-integer-unit:1 >>;
+%% int 32
+pack_int(N) when N < 16#80000000->
+    << 16#D2:8, N:32/big-signed-integer-unit:1 >>;
 %% uint 32
-pack_uint(N) when (N band 16#FFFFFFFF) =:= N->
+pack_int(N) when (N band 16#FFFFFFFF) =:= N->
     << 16#CE:8, N:32/big-unsigned-integer-unit:1 >>;
+%% int 64
+pack_int(N) when N < 16#8000000000000000 ->
+    << 16#D3:8, N:64/big-signed-integer-unit:1 >>;
 %% uint 64
-pack_uint(N) when (N band 16#FFFFFFFFFFFFFFFF) =:= N ->
+pack_int(N) when (N band 16#FFFFFFFFFFFFFFFF) =:= N ->
     << 16#CF:8, N:64/big-unsigned-integer-unit:1 >>;
-%% too big unit
-pack_uint(N) ->
+%% too big (u)nit
+pack_int(N) ->
     throw({badarg, N}).
-
 
 %% @doc float : erlang's float is always IEEE 754 64bit format. Thus it
 %% never generates << 16#CA:8, F:32/big-float-unit:1 >>.
